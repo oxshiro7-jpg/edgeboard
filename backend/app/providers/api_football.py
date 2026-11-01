@@ -13,7 +13,7 @@ Rules this adapter keeps:
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Callable, Optional
 
 from app.engine.types import (Absence, LineupInfo, MatchContext, OddsQuote, OddsSeries, Referee, StyleProfile,
@@ -112,6 +112,24 @@ def map_fixture_to_record(fx: dict, stats_by_team: dict[int, list[dict]], team_i
     )
 
 
+FINISHED = {"FT", "AET", "PEN"}
+_NO_LAST_PARAM: set[str] = set()     # API keys whose plan refuses the `last` parameter (free plan)
+
+
+def _finished_before(items: list[dict], before: datetime) -> list[dict]:
+    """Finished fixtures before `before`, newest first, de-duplicated by id."""
+    seen, out = set(), []
+    for f in items:
+        fid = f["fixture"]["id"]
+        if fid in seen or (f["fixture"].get("status") or {}).get("short") not in FINISHED:
+            continue
+        if datetime.fromisoformat(f["fixture"]["date"]) >= before:
+            continue
+        seen.add(fid)
+        out.append(f)
+    return sorted(out, key=lambda f: f["fixture"]["date"], reverse=True)
+
+
 class ApiFootballProvider(FootballDataProvider):
     name = "api_football"
 
@@ -181,18 +199,46 @@ class ApiFootballProvider(FootballDataProvider):
 
     # ---------------------------------------------------------- statistics
     def team_history(self, team_id: str, before: datetime, limit: int = 20) -> list[TeamMatchRecord]:
-        out = []
         if self.history_limit:
             limit = min(limit, self.history_limit)
-        for f in self._get("/fixtures", team=team_id, last=limit, status="FT"):
+        out = []
+        for f in self._recent_finished(team_id, before, limit):
             when = datetime.fromisoformat(f["fixture"]["date"])
-            if when >= before:
-                continue
             stats = self._get("/fixtures/statistics", fixture=f["fixture"]["id"])
             by_team = {s["team"]["id"]: s["statistics"] for s in stats}
             opp = f["teams"]["away" if str(f["teams"]["home"]["id"]) == str(team_id) else "home"]["id"]
             out.append(map_fixture_to_record(f, by_team, int(team_id), self.elo_lookup(str(opp), when)))
         return sorted(out, key=lambda r: r.date, reverse=True)
+
+    def _recent_finished(self, team_id: str, before: datetime, limit: int) -> list[dict]:
+        """The team's most recent finished matches before `before`.
+
+        Paid plans: one /fixtures?team&last call. The free plan refuses the
+        `last` parameter, so there: the team's fixtures for the current season
+        (plus the previous one if the season is too young), finished only."""
+        if self.api_key not in _NO_LAST_PARAM:
+            try:
+                res = self._get("/fixtures", team=team_id, last=limit, status="FT")
+                return _finished_before(res, before)[:limit]
+            except RuntimeError as e:
+                if "last" not in str(e).lower():
+                    raise
+                _NO_LAST_PARAM.add(self.api_key)       # remember: don't spend a request on it again
+        season = self._season_for(team_id, before)
+        fin = _finished_before(self._get("/fixtures", team=team_id, season=season), before)
+        if len(fin) < max(5, limit // 2):
+            fin = _finished_before(fin + self._get("/fixtures", team=team_id, season=season - 1), before)
+        return fin[:limit]
+
+    def _season_for(self, team_id: str, when: datetime) -> int:
+        """Season of the team's fixture on the slate (API-Football gives it); otherwise
+        the European season containing `when` (Aug-May)."""
+        for f in self._raw_fixtures.values():
+            if str(team_id) in (str(f["teams"]["home"]["id"]), str(f["teams"]["away"]["id"])):
+                season = (f.get("league") or {}).get("season")
+                if season:
+                    return int(season)
+        return when.year if when.month >= 7 else when.year - 1
 
     def team_rating(self, team_id: str, as_of: datetime) -> Optional[float]:
         return self.elo_lookup(team_id, as_of)
@@ -204,7 +250,15 @@ class ApiFootballProvider(FootballDataProvider):
         return None, None
 
     def head_to_head(self, home_id: str, away_id: str, limit: int = 6) -> list[TeamMatchRecord]:
-        res = self._get("/fixtures/headtohead", h2h=f"{home_id}-{away_id}", last=limit, status="FT")
+        # Display only (weight 0): if the plan refuses it, show no H2H rather than fail the match.
+        try:
+            if self.api_key in _NO_LAST_PARAM:
+                res = self._get("/fixtures/headtohead", h2h=f"{home_id}-{away_id}")
+            else:
+                res = self._get("/fixtures/headtohead", h2h=f"{home_id}-{away_id}", last=limit, status="FT")
+        except RuntimeError:
+            return []
+        res = _finished_before(res, datetime.now(timezone.utc))[:limit]
         return [map_fixture_to_record(f, {}, int(home_id), None) for f in res]
 
     def match_context(self, fixture: FixtureRef) -> MatchContext:

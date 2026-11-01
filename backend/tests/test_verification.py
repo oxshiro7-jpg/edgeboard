@@ -329,3 +329,34 @@ class LiveBudget(unittest.TestCase):
         self.assertEqual(e["status"], "VERIFIED")
         self.assertEqual({x["fixture_id"]: x["status"] for x in svc.slate(DAY)}["1002"], "VERIFIED")
         self.assertEqual(svc.match(DAY, "9999")["status"], "UNVERIFIED")   # unknown id: still refused
+
+
+class FreePlan(unittest.TestCase):
+    """API-Football's free plan refuses `last`: history falls back to the season list."""
+
+    def test_history_without_last_param(self):
+        from app.providers import api_football as af
+        af._NO_LAST_PARAM.clear()
+
+        class FreePlanFake(FakeApiFootball):
+            def __call__(self, path, params):
+                if "last" in params:
+                    self.refused.append((path, dict(params)))
+                    return {"errors": {"plan": "Free plans do not have access to the Last parameter."}, "response": []}
+                if path == "/fixtures" and "team" in params and "season" in params:
+                    self.seasons.append(params["season"])
+                    p = {k: v for k, v in params.items() if k != "season"}
+                    body = super().__call__(path, {**p, "last": 10})
+                    upcoming = fixture_item(70000 + int(params["team"]), int(params["team"]), 9003,
+                                            KO + timedelta(days=7))           # future fixture: must be ignored
+                    return {"response": body["response"] + [upcoming]}
+                return super().__call__(path, params)
+
+        today = [fixture_item(1001, 9001, 9002, KO)]
+        fake = FreePlanFake(today)
+        fake.refused, fake.seasons = [], []
+        e = make_service(fake).match(DAY, "1001")
+        self.assertEqual(e["status"], "VERIFIED", e["messages"])
+        self.assertEqual(len(fake.refused), 1, fake.refused)   # refused once, then never asked again
+        self.assertEqual(set(fake.seasons), {2026})      # season taken from the slate fixture
+        af._NO_LAST_PARAM.clear()
