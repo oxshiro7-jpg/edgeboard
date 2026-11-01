@@ -74,13 +74,19 @@ export default async function Dashboard() {
           </section>
 
           <section className="panel p-4" aria-labelledby="avoid-h">
-            <h2 id="avoid-h" className="text-base font-semibold">Likely, but not worth the price</h2>
-            <p className="mt-1 text-sm text-ink-2">High-probability selections the engine passed on.</p>
+            <h2 id="avoid-h" className="text-base font-semibold">Rejected: do not bet</h2>
+            <p className="mt-1 text-sm text-ink-2">
+              Likely outcomes the engine turned down. The price is too short or the model is not confident
+              enough. These are not picks; the only picks are under Best picks today.
+            </p>
             <ul className="mt-3 divide-y divide-line/60">
               {board.board.avoid.slice(0, 6).map((p) => (
                 <li key={`${p.fixture_id}${p.key}`} className="py-2 text-sm">
                   <div className="flex justify-between gap-3">
-                    <span className="text-ink">{p.label}</span>
+                    <span className="text-ink">
+                      <span className="mr-2 rounded-sm border border-line px-1 text-[11px] font-semibold text-critical">REJECTED</span>
+                      {p.label}
+                    </span>
                     <span className="num text-ink-2">{pct(p.model_probability)} at {odds(p.bookmaker_odds)}</span>
                   </div>
                   <div className="text-xs text-muted">{p.match}. {p.reasons_rejected[0]}</div>
