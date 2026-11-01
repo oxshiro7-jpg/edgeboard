@@ -324,7 +324,7 @@ class SyntheticOddsProvider(OddsProvider):
         self.f = football
         self.cfg = EngineConfig()
 
-    def odds(self, fixture, home_name="", away_name=""):
+    def odds(self, fixture, home_name="", away_name="", alt_names=()):
         f = self.f
         t = f.tags(fixture)
         rng = random.Random(fixture.id)

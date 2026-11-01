@@ -63,6 +63,12 @@ class AnalysisService:
                  tz: str = "UTC"):
         self.settings = settings
         self.config = ConfigStore()
+        if settings.football_provider == "football_data":
+            # Free sources give scores only (no xG, shots, lineups or injuries), so the data-quality
+            # score tops out near 52. This profile admits such fixtures under its own model version,
+            # with every other gate (EV, odds range, risk, edge sanity checks) unchanged.
+            self.config.update({"model_version": "FootballModel_v0.3.0-scores-only",
+                                "thresholds": {"min_data_quality": 45, "min_confidence": 50, "min_pick_score": 55}})
         self.whitelist = list(settings.competitions)
         self.ml_model = None     # set when a challenger is promoted (services.lab)
         self._factory = providers_factory

@@ -29,7 +29,36 @@ SPORT_KEYS = {
     "uel": "soccer_uefa_europa_league",
     "uecl": "soccer_uefa_europa_conference_league",
     "facup": "soccer_fa_cup",
+    "championship": "soccer_efl_champ",
+    "brasileirao": "soccer_brazil_campeonato",
 }
+
+# Legal-form and filler tokens that differ between feeds ("Real Madrid CF" / "Real Madrid").
+# Removing them is a fixed rule applied to both sides; it is not a similarity measure.
+_FORM_TOKENS = {"fc", "afc", "cf", "sc", "ac", "as", "ss", "ssc", "sv", "vfl", "vfb", "tsg", "fk", "cd",
+                "ud", "rcd", "rc", "club", "de", "calcio", "and", "1"}
+
+# Explicit aliases for clubs whose names differ beyond legal form between football-data.org and
+# The Odds API (canonical football-data name -> canonical odds-feed name). An alias that is wrong
+# simply finds no event: matching also requires both teams and the kickoff to agree.
+ALIASES = {
+    "internazionale milano": "inter milan",
+    "bayern munchen": "bayern munich",
+    "bayer 04 leverkusen": "bayer leverkusen",
+    "athletic": "athletic bilbao",
+    "real betis balompie": "real betis",
+    "deportivo alaves": "alaves",
+    "rayo vallecano madrid": "rayo vallecano",
+}
+
+
+def canonical(name: str) -> str:
+    """normalise() plus fixed rules: '&' -> 'and', punctuation removed, legal-form tokens dropped,
+    then an explicit alias if one is registered."""
+    n = normalise(name.replace("&", " and "))
+    n = "".join(ch if ch.isalnum() or ch == " " else " " for ch in n)
+    n = " ".join(t for t in n.split() if t not in _FORM_TOKENS)
+    return ALIASES.get(n, n)
 
 
 def normalise(name: str) -> str:
@@ -89,39 +118,46 @@ def best_price_series(quotes: dict[str, list[OddsQuote]], history: dict[str, lis
 class TheOddsApiProvider(OddsProvider):
     name = "the_odds_api"
 
-    def __init__(self, api_key: str, regions: str = "uk,eu", bookmakers: Optional[list[str]] = None,
-                 history_loader=None, aliases: Optional[dict[str, list[str]]] = None):
+    def __init__(self, api_key: str, regions: str = "eu", markets: str = "h2h,totals",
+                 bookmakers: Optional[list[str]] = None, history_loader=None,
+                 aliases: Optional[dict[str, list[str]]] = None, http=None):
+        import os
+        from .web_cache import WebCache
         self.api_key = api_key
         self.regions = regions
+        self.markets = markets
         self.bookmakers = bookmakers
         self.history_loader = history_loader   # callable(fixture_id) -> {key: [OddsQuote]} from odds_history
         self.aliases = aliases or {}           # provider team id -> exact odds-feed names (teams.aliases)
-        self._cache: dict[str, list[dict]] = {}
+        hours = float(os.getenv("ODDS_CACHE_HOURS", "24"))
+        # Free plan: 500 credits a month; each call costs (markets x regions). Keep a reserve.
+        self.http = http or WebCache(
+            "The Odds API", BASE_URL, {}, lambda path, params: int(hours * 3600),
+            cache_path=os.getenv("ODDS_CACHE_PATH", "/tmp/edgeboard-odds.json"),
+            remaining_header="x-requests-remaining", reserve=int(os.getenv("ODDS_CREDIT_RESERVE", "10")),
+            secret_params=("apiKey",))
 
     def _events(self, sport: str) -> list[dict]:
-        if sport not in self._cache:
-            import httpx
-            r = httpx.get(f"{BASE_URL}/sports/{sport}/odds", timeout=20, params={
-                "apiKey": self.api_key, "regions": self.regions, "markets": "h2h,totals,spreads",
-                "oddsFormat": "decimal", "dateFormat": "iso"})
-            r.raise_for_status()
-            self._cache[sport] = r.json()
-        return self._cache[sport]
+        body = self.http.get(f"/sports/{sport}/odds",
+                             {"regions": self.regions, "markets": self.markets, "oddsFormat": "decimal",
+                              "dateFormat": "iso"}, secrets={"apiKey": self.api_key})
+        return body if isinstance(body, list) else []
 
-    def odds(self, fixture: FixtureRef, home_name: str, away_name: str) -> dict[str, OddsSeries]:
-        """Exact match only: the event's team names must equal the verified
-        team names (or an alias explicitly registered for that provider team
-        id) and kick off within 3 hours of the verified kickoff. Otherwise
-        nothing is returned and the fixture shows ODDS UNAVAILABLE."""
+    def odds(self, fixture: FixtureRef, home_name: str, away_name: str,
+             alt_names: tuple = ()) -> dict[str, OddsSeries]:
+        """The event must match BOTH verified teams (provider name or short name, after the fixed
+        canonical rules or an explicit alias) and kick off within 3 hours of the verified kickoff,
+        and exactly one event may match. Otherwise nothing is returned: ODDS UNAVAILABLE."""
         sport = SPORT_KEYS.get(fixture.competition_id)
         if not sport or fixture.kickoff is None:
             return {}
-        hs = {normalise(home_name), *(normalise(x) for x in self.aliases.get(fixture.home_id, []))}
-        as_ = {normalise(away_name), *(normalise(x) for x in self.aliases.get(fixture.away_id, []))}
+        alt_h, alt_a = (alt_names + (None, None))[:2]
+        hs = {canonical(x) for x in (home_name, alt_h, *self.aliases.get(fixture.home_id, [])) if x}
+        as_ = {canonical(x) for x in (away_name, alt_a, *self.aliases.get(fixture.away_id, [])) if x}
         matches = []
         for ev in self._events(sport):
             ko = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
-            if normalise(ev["home_team"]) in hs and normalise(ev["away_team"]) in as_ \
+            if canonical(ev["home_team"]) in hs and canonical(ev["away_team"]) in as_ \
                     and abs((ko - fixture.kickoff).total_seconds()) <= 3 * 3600:
                 matches.append(ev)
         if len(matches) != 1:

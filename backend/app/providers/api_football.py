@@ -351,7 +351,7 @@ class ApiFootballOdds(OddsProvider):
         self.bookmakers = bookmakers
         self.history_loader = history_loader
 
-    def odds(self, fixture: FixtureRef, home_name: str = "", away_name: str = "") -> dict[str, OddsSeries]:
+    def odds(self, fixture: FixtureRef, home_name: str = "", away_name: str = "", alt_names: tuple = ()) -> dict[str, OddsSeries]:
         res = self.p._get("/odds", fixture=fixture.id)
         quotes: dict[str, list[OddsQuote]] = {}
         for item in res:

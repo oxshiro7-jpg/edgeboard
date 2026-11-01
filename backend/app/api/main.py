@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import date, datetime, timezone
 from typing import Literal, Optional
 
@@ -25,6 +26,21 @@ app = FastAPI(title="EdgeBoard API", version="0.3.0")
 app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_methods=["GET", "POST", "PUT"],
                    allow_headers=["Authorization", "Content-Type"])
 service = AnalysisService(settings, tz=settings.timezone)
+
+
+def _warm_up() -> None:
+    """Fetch today's slate in the background at start-up (free sources are rate-limited,
+    so the first page view would otherwise wait for every request)."""
+    try:
+        from zoneinfo import ZoneInfo
+        service.slate(datetime.now(ZoneInfo(settings.timezone)).date())
+    except Exception as e:   # not configured or a source refused: pages show the reason
+        log.warning("warm-up skipped: %s", e)
+
+
+if os.getenv("WARM_UP", "1") == "1":
+    import threading
+    threading.Thread(target=_warm_up, daemon=True).start()
 limiter = RateLimiter(settings.rate_limit_per_minute)
 bearer = HTTPBearer(auto_error=False)
 
@@ -80,9 +96,12 @@ def health():
     except ProviderNotConfigured as e:
         configured, note = False, str(e)
     budget = None
-    if configured and settings.api_football_key:
+    if configured and settings.football_provider == "api_football" and settings.api_football_key:
         from app.providers.http_cache import shared_transport
         budget = shared_transport(settings.api_football_key).status()
+    elif configured and settings.football_provider == "football_data":
+        from app.providers.registry import _shared_http
+        budget = [h.status() for h in _shared_http.values()]   # type: ignore[attr-defined]
     return {"status": "ok", "providers": {"football": settings.football_provider, "odds": settings.odds_provider},
             "provider_configured": configured, "note": note, "api_budget": budget}
 

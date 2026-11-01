@@ -107,7 +107,7 @@ class OddsProvider(ABC):
     name: str = "base"
 
     @abstractmethod
-    def odds(self, fixture: FixtureRef, home_name: str, away_name: str) -> dict[str, OddsSeries]:
+    def odds(self, fixture: FixtureRef, home_name: str, away_name: str, alt_names: tuple = ()) -> dict[str, OddsSeries]:
         """Return series keyed by engine market keys (see engine.markets).
         Team names are passed because odds feeds rarely share fixture ids
         with stats feeds; adapters match events on normalised names."""

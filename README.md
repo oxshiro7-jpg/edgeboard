@@ -91,10 +91,24 @@ edgeboard/
     app/db/                PostgreSQL schema (all 21 tables + audit_logs, app_settings), append-only predictions
     app/workers/tasks.py   Celery beat schedule: history/fixtures/stats/odds/injuries/lineups/recalc/evaluation
     migrations/            TimescaleDB hypertables + DB-level immutability triggers
-    tests/                 74 tests (engine, phases 4-8, verification gate on API-shaped payloads)
+    tests/                 84 tests (engine, phases 4-8, verification gate on API-shaped payloads)
   frontend/                Next.js 15, TypeScript, Tailwind
   prototype/               static status page (no fixtures: it is not connected to an API)
 ```
+
+## Free data stack (default on Render)
+
+`FOOTBALL_PROVIDER=football_data` uses football-data.org's free tier (10 competitions mapped:
+Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie, Primeira Liga, Championship,
+Brasileirão, Champions League; current season; 10 requests/minute) and The Odds API's free tier
+(500 credits/month; h2h + totals, EU region = 2 credits per league refresh, cached `ODDS_CACHE_HOURS`).
+One request per competition gives the whole season's results, which feed form, team verification,
+league averages and H2H. There is no xG, shot, lineup or injury data on these tiers: those inputs stay
+empty, data quality tops out around 52, and the app runs the `FootballModel_v0.3.0-scores-only`
+profile (data quality >= 45, confidence >= 50, pick score >= 55; EV, odds range, risk and edge-sanity
+gates unchanged). Odds events are matched to fixtures only when both teams agree after fixed rules
+(case, accents, punctuation, legal-form tokens like FC/CF/AC) or an explicit alias, and the kickoff is
+within 3 hours, and exactly one event matches. Otherwise: ODDS UNAVAILABLE.
 
 ## Put it online (Render)
 
@@ -194,7 +208,7 @@ User bets, challenges and bankroll are held per process without a database; the 
 
 ## Verified vs. not yet verified
 
-Run here: 72 backend tests, including the verification gate end to end through the real API-Football
+Run here: 84 backend tests, including the verification gate end to end through the real API-Football
 adapter on API-shaped payloads (unknown fixture id, unknown team, name mismatch, postponed, cancelled,
 wrong date, unsupported league, missing odds, short history, EV integrity, and the four named fake
 fixtures). Not run here: a live call to API-Football (blocked by this environment's network policy),

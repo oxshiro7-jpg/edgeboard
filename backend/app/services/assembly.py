@@ -39,7 +39,7 @@ def build_fixture_input(v: VerifiedFixture, p: Providers) -> FixtureInput:
         lineup_home=p.lineups.lineup(fx, v.home.id) if p.lineups else LineupInfo(status="unknown"),
         lineup_away=p.lineups.lineup(fx, v.away.id) if p.lineups else LineupInfo(status="unknown"),
         referee=p.football.referee(fx.id),
-        odds=p.odds.odds(fx, v.home.name, v.away.name),
+        odds=p.odds.odds(fx, v.home.name, v.away.name, (v.home.short_name, v.away.short_name)),
         h2h=p.football.head_to_head(v.home.id, v.away.id),
         league_avg_goals=p.football.league_average_goals(v.competition.id, fx.kickoff),
         data_updated_at=p.football.data_timestamp(fx), status=fx.status,

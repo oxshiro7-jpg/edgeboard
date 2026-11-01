@@ -10,7 +10,7 @@ from typing import Optional
 
 from .base import FootballDataProvider, InjuryProvider, LineupProvider, OddsProvider
 
-FOOTBALL_PROVIDERS = ("api_football",)
+FOOTBALL_PROVIDERS = ("api_football", "football_data")
 ODDS_PROVIDERS = ("api_football", "the_odds_api")
 
 
@@ -33,6 +33,8 @@ def build_providers(football: str = "api_football", odds: str = "api_football", 
         raise ProviderNotConfigured(f"Unknown football provider {football!r}; supported: {FOOTBALL_PROVIDERS}")
     if odds not in ODDS_PROVIDERS:
         raise ProviderNotConfigured(f"Unknown odds provider {odds!r}; supported: {ODDS_PROVIDERS}")
+    if football == "football_data":
+        return _football_data(keys, tz)
     from .api_football import ApiFootballOdds, ApiFootballProvider
     snap = os.getenv("API_FOOTBALL_SNAPSHOT")
     if snap:   # replay of raw API-Football responses recorded by scripts/fetch_snapshot.py
@@ -54,3 +56,34 @@ def build_providers(football: str = "api_football", odds: str = "api_football", 
     else:
         op = ApiFootballOdds(fp)
     return Providers(fp, op, fp.injury_provider(), fp.lineup_provider())
+
+
+_shared_http: dict[tuple, object] = {}
+
+
+def _football_data(keys: dict[str, str], tz: str) -> Providers:
+    """Free stack: football-data.org (fixtures, results) + The Odds API (prices).
+    No injury or lineup feed: those inputs stay empty and lower data quality."""
+    token = keys.get("FOOTBALL_DATA_TOKEN")
+    if not token:
+        raise ProviderNotConfigured("FOOTBALL_DATA_TOKEN is not set: no fixtures can be fetched or verified")
+    from .football_data import FootballDataOrgProvider
+    from .the_odds_api import TheOddsApiProvider
+    fd = _shared_http.get(("fd", token))
+    fp = FootballDataOrgProvider(token, tz=tz, http=fd)
+    _shared_http[("fd", token)] = fp.http          # one cache and one rate limiter per process
+    okey = keys.get("THE_ODDS_API_KEY")
+    if okey:
+        oh = _shared_http.get(("odds", okey))
+        op: OddsProvider = TheOddsApiProvider(okey, http=oh)
+        _shared_http[("odds", okey)] = op.http      # type: ignore[attr-defined]
+    else:
+        op = _NoOdds()
+    return Providers(fp, op, None, None)
+
+
+class _NoOdds(OddsProvider):
+    name = "none"
+
+    def odds(self, fixture, home_name="", away_name="", alt_names=()):
+        return {}          # -> ODDS UNAVAILABLE on every fixture
