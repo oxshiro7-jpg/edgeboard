@@ -1,0 +1,41 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* EdgeBoard tokens: floodlit-pitch navy, home blue / away orange as a
+   diverging pair with a neutral draw, status colours reserved for risk.
+   Values are RGB channels so Tailwind opacity modifiers work. Colours validated with the dataviz palette checker on --panel. */
+:root {
+  --bg: 14 22 34;
+  --panel: 19 30 44;
+  --raised: 25 39 57;
+  --line: 36 53 75;
+  --ink: 230 236 243;
+  --ink-2: 170 183 200;
+  --muted: 116 133 155;
+  --home: 57 135 229;
+  --away: 217 89 38;
+  --draw: 111 125 144;
+  --good: 12 163 12;
+  --warn: 250 178 25;
+  --serious: 236 131 90;
+  --critical: 208 59 59;
+  color-scheme: dark;
+}
+
+html, body { background: rgb(var(--bg)); color: rgb(var(--ink)); }
+body { font-feature-settings: "tnum" 1, "lnum" 1; -webkit-font-smoothing: antialiased; }
+
+:focus-visible { outline: 2px solid rgb(var(--home)); outline-offset: 2px; border-radius: 3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+@layer components {
+  .panel { @apply bg-panel border border-line rounded-lg; }
+  .num { @apply font-cond tabular-nums; }
+  .chip { @apply inline-flex items-center gap-1 rounded-sm px-1.5 py-0.5 text-xs font-medium border border-line text-ink-2; }
+  .th { @apply text-left text-xs font-medium text-muted px-3 py-2 whitespace-nowrap; }
+  .td { @apply px-3 py-2.5 align-middle whitespace-nowrap; }
+}

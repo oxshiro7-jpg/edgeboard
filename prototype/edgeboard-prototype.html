@@ -1,0 +1,74 @@
+<title>EdgeBoard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap">
+<style>
+/* Layout: one column. A status panel states that no verified fixture exists here,
+   then the pipeline every fixture must pass, then the status legend. */
+:root {
+  --bg: #0e1622; --panel: #131e2c; --line: #24354b; --ink: #e6ecf3; --ink-2: #aab7c8; --muted: #7d8ea4;
+  --good: #0ca30c; --warn: #fab219; --critical: #d03b3b;
+  --font-sans: "Barlow", "Segoe UI", system-ui, sans-serif;
+  --font-cond: "Barlow Semi Condensed", "Barlow", "Arial Narrow", system-ui, sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--font-sans); font-size: 15px; line-height: 1.5; }
+.wrap { max-width: 860px; margin: 0 auto; padding-inline: 20px; padding-block: 32px 48px; display: flex; flex-direction: column; gap: 22px; }
+h1 { font-family: var(--font-cond); font-weight: 600; font-size: 32px; margin: 0; letter-spacing: -0.01em; }
+h2 { font-size: 16px; font-weight: 600; margin: 0 0 10px; }
+p { margin: 0; }
+.sub { color: var(--ink-2); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; }
+.status { border-color: color-mix(in oklab, var(--critical) 55%, var(--panel)); }
+.badge { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 3px; padding: 2px 8px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+ol.steps { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 6px; color: var(--ink-2); }
+ol.steps b { color: var(--ink); font-weight: 600; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+td { padding: 8px 10px 8px 0; border-bottom: 1px solid color-mix(in oklab, var(--line) 60%, var(--panel)); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td:last-child { color: var(--ink-2); }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: var(--bg); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; }
+.scroll { overflow-x: auto; }
+</style>
+
+<main class="wrap">
+  <header style="display:flex;flex-direction:column;gap:6px">
+    <h1>EdgeBoard</h1>
+    <p class="sub">Football match analysis on verified fixtures only.</p>
+  </header>
+
+  <section class="panel status" aria-labelledby="st">
+    <h2 id="st"><span class="badge"><i class="dot" style="background:var(--critical)"></i>UNVERIFIED</span>&nbsp; NO VERIFIED FIXTURE</h2>
+    <p>This preview page is not connected to a fixtures API, so it shows no matches, odds, statistics or predictions.
+      The earlier preview used synthetic test clubs; it has been withdrawn and every recommendation it showed is void.</p>
+    <p class="sub" style="margin-top:8px">Run the app with <code>API_FOOTBALL_KEY</code> set to see today's real fixtures.
+      <code>python scripts/verify_today.py</code> lists every displayed match next to its API-Football fixture id.</p>
+  </section>
+
+  <section class="panel" aria-labelledby="pl">
+    <h2 id="pl">What every fixture must pass before it is analysed</h2>
+    <ol class="steps">
+      <li><b>Fetch</b> today's fixtures from the football API for the app's timezone.</li>
+      <li><b>Filter</b> to supported competitions.</li>
+      <li><b>Verify</b> by provider id: fixture exists, both team ids resolve to the same names, competition supported, kickoff on the selected date, not postponed or cancelled.</li>
+      <li><b>Fetch</b> statistics and bookmaker odds by provider id. No odds means ODDS UNAVAILABLE; too little history means DATA INCOMPLETE and no prediction.</li>
+      <li><b>Run</b> the models in backend code, then recompute every EV, fair price and implied probability. A mismatch rejects the recommendation and is logged.</li>
+      <li><b>Recommend</b> only on VERIFIED fixtures. The AI analyst only explains this verified data.</li>
+    </ol>
+  </section>
+
+  <section class="panel" aria-labelledby="lg">
+    <h2 id="lg">Verification statuses</h2>
+    <div class="scroll"><table><tbody>
+      <tr><td><span class="badge"><i class="dot" style="background:var(--good)"></i>VERIFIED</span></td><td>All checks passed and odds exist. The only status that can produce recommendations.</td></tr>
+      <tr><td><span class="badge"><i class="dot" style="background:var(--critical)"></i>UNVERIFIED</span></td><td>NO VERIFIED FIXTURE or TEAM NOT VERIFIED: the API did not confirm the fixture, a team or the competition.</td></tr>
+      <tr><td><span class="badge"><i class="dot" style="background:var(--warn)"></i>ODDS UNAVAILABLE</span></td><td>Verified fixture, but the odds API returned no prices. Model probabilities only, no bets.</td></tr>
+      <tr><td><span class="badge"><i class="dot" style="background:var(--warn)"></i>DATA INCOMPLETE</span></td><td>Not enough statistics from the data provider. No prediction is shown.</td></tr>
+      <tr><td><span class="badge"><i class="dot" style="background:var(--muted)"></i>POSTPONED</span></td><td>Provider status postponed, suspended or interrupted.</td></tr>
+      <tr><td><span class="badge"><i class="dot" style="background:var(--muted)"></i>CANCELLED</span></td><td>Provider status cancelled, abandoned, awarded or walkover.</td></tr>
+    </tbody></table></div>
+  </section>
+</main>

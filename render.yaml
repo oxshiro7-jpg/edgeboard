@@ -1,0 +1,21 @@
+# Render Blueprint: New > Blueprint > pick this repo. You will be asked for the two secret values.
+services:
+  - type: web
+    name: edgeboard
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: API_FOOTBALL_KEY        # from dashboard.api-football.com
+        sync: false
+      - key: APP_PASSWORD            # password for the site (any username)
+        sync: false
+      - key: APP_TIMEZONE
+        value: Africa/Lagos
+      - key: API_DAILY_CALL_LIMIT    # free API-Football plan: 100
+        value: "100"
+      - key: MAX_ANALYSED_FIXTURES   # matches analysed automatically per day; others on click. Raise on a paid plan.
+        value: "2"
+      - key: API_HISTORY_MATCHES     # past matches per team (1 API call each)
+        value: "8"
