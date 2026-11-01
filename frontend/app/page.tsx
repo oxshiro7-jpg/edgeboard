@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { odds, pct } from "@/lib/format";
+import { odds, pct, TIME_ZONE } from "@/lib/format";
 import { MatchTable } from "@/components/MatchTable";
 import { PickCard } from "@/components/PickCard";
 import { HeroSlip } from "@/components/HeroSlip";
@@ -25,7 +25,7 @@ export default async function Dashboard() {
     <div>
       <header className="border-b border-line px-6 pb-4 pt-6">
         <h1 className="font-cond text-3xl font-semibold tracking-tight">
-          {new Date(board.date).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" })}
+          {new Date(`${board.date}T12:00:00Z`).toLocaleDateString([], { weekday: "long", day: "numeric", month: "long", timeZone: TIME_ZONE })}
         </h1>
         <p className="mt-1 max-w-[70ch] text-ink-2">
           {board.verification.fixtures_from_provider} fixtures returned by the fixtures API in supported competitions

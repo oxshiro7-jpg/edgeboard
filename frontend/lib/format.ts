@@ -22,8 +22,11 @@ export function odds(o: number | null | undefined, format: "decimal" | "fraction
   return `${best.n}/${best.d}`;
 }
 
+// Pages render on the server (UTC), so the display timezone is explicit, not the machine's.
+export const TIME_ZONE = process.env.NEXT_PUBLIC_APP_TIMEZONE ?? "Africa/Lagos";
+
 export const kickoff = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE });
 
 export const ago = (iso: string | null) => {
   if (!iso) return "unknown";
