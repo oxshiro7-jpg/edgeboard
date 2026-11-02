@@ -30,12 +30,26 @@ class LabService:
         self.analysis = analysis
         self._cases: dict[tuple, list] = {}
         self._lock = threading.Lock()
-        self.user_bets: list[tk.TrackedBet] = []
-        self.challenges: dict[str, tk.Challenge] = {}
-        self.plan: Optional[tk.BankrollPlan] = None
+        self.record = analysis.record                  # tracked bets live in the persistent store
+        self.store = analysis.store
+        self.challenges: dict[str, tk.Challenge] = {
+            c["id"]: tk.Challenge(c["id"], c["name"], c["kind"], c["target"],
+                                  datetime.fromisoformat(c["starts_at"]), c.get("rules") or {})
+            for c in self.store.get("challenges", [])}
+        plan = self.store.get("bankroll_plan")
+        self.plan: Optional[tk.BankrollPlan] = tk.BankrollPlan(**plan) if plan else None
         self.ml_report: Optional[dict] = None
         self.ml_model: Optional[SoftmaxRegression] = None
         self.history_note: Optional[str] = None
+
+    @property
+    def user_bets(self) -> list[tk.TrackedBet]:
+        return self.record.bets("user")
+
+    def _save_challenges(self) -> None:
+        self.store.put("challenges", [{"id": c.id, "name": c.name, "kind": c.kind, "target": c.target,
+                                       "starts_at": c.starts_at.isoformat(), "rules": c.rules}
+                                      for c in self.challenges.values()])
 
     # ------------------------------------------------------------ data
     def analyses(self, day: date) -> dict[str, dict]:
@@ -96,10 +110,21 @@ class LabService:
         return tk.from_iter(r["bets"])
 
     def performance(self, day: date) -> dict:
-        bets = self.model_record(day)
+        forward = self.record.bets("model")
+        if forward:
+            bets = forward
+            source = ("forward record: every pick the app recommended, logged before kickoff at the price shown, "
+                      "then given its closing price and final result")
+            note = None if self.store.persistent else \
+                "No database configured (DATABASE_URL): this record is lost whenever the server restarts."
+        else:
+            bets = self.model_record(day)
+            source = "walk-forward record of every recommended selection on verified finished fixtures"
+            note = self.history_note
         return {
-            "source": "walk-forward record of every recommended selection on verified finished fixtures",
-            "available": bool(bets), "note": self.history_note,
+            "source": source, "available": bool(bets), "note": note,
+            "coverage": self.record.coverage(bets) if forward else None,
+            "calibration": self.record.calibration(bets) if forward else None,
             "summary": tk.summarise(bets),
             "ev_realisation": _ev_realisation(bets),
             "streaks": tk.streaks(bets),
@@ -119,18 +144,14 @@ class LabService:
             label=f"{leg.label} ({a['home']['short_name']} v {a['away']['short_name']})", odds=leg.odds,
             model_probability=leg.model_probability, ev=leg.ev or 0.0, confidence=leg.confidence, risk=leg.risk,
             model_version=a["model"]["version"], side=tk.side_of(market_key), stake_units=stake_units, source="user")
-        self.user_bets.append(b)
-        return tk.to_dict(b)
+        return self.record.add_user_bet(b, a)
 
     def settle_user_bet(self, bet_id: str, result: dict) -> dict:
-        b = next((x for x in self.user_bets if x.id == bet_id), None)
-        if not b:
-            raise KeyError(bet_id)
-        tk.settle(b, tk.MatchResult(**result), datetime.now(timezone.utc))
-        return tk.to_dict(b)
+        return self.record.update_user_bet(bet_id, lambda b: tk.settle(b, tk.MatchResult(**result), datetime.now(timezone.utc)))
 
     def set_bankroll(self, starting: float, unit_pct: float, mode: str) -> dict:
         self.plan = tk.BankrollPlan(starting, unit_pct, mode)
+        self.store.put("bankroll_plan", {"starting": starting, "unit_pct": unit_pct, "mode": mode})
         return self.bankroll()
 
     def bankroll(self) -> dict:
@@ -143,6 +164,7 @@ class LabService:
             raise ValueError("Challenge needs kind picks or days and a target between 1 and 1000")
         c = tk.Challenge(uuid.uuid4().hex[:10], name, kind, target, starts_at or datetime.now(timezone.utc), rules)
         self.challenges[c.id] = c
+        self._save_challenges()
         return tk.challenge_progress(c, self.user_bets, datetime.now(timezone.utc))
 
     def list_challenges(self, day: date, include_model_record: bool = True) -> list[dict]:

@@ -91,7 +91,7 @@ edgeboard/
     app/db/                PostgreSQL schema (all 21 tables + audit_logs, app_settings), append-only predictions
     app/workers/tasks.py   Celery beat schedule: history/fixtures/stats/odds/injuries/lineups/recalc/evaluation
     migrations/            TimescaleDB hypertables + DB-level immutability triggers
-    tests/                 86 tests (engine, phases 4-8, verification gate on API-shaped payloads)
+    tests/                 91 tests (engine, phases 4-8, verification gate on API-shaped payloads)
   frontend/                Next.js 15, TypeScript, Tailwind
   prototype/               static status page (no fixtures: it is not connected to an API)
 ```
@@ -112,6 +112,17 @@ reported as agreeing with itself; goal-count markets are rejected when the model
 is more than 0.35 goals from the market's; "Strong" labels need data quality >= 60. Odds events are matched to fixtures only when both teams agree after fixed rules
 (case, accents, punctuation, legal-form tokens like FC/CF/AC) or an explicit alias, and the kickoff is
 within 3 hours, and exactly one event matches. Otherwise: ODDS UNAVAILABLE.
+
+## Track record, closing prices, settlement
+
+Every recommended selection is logged before kickoff at the price shown (`app/services/record.py`),
+one entry per fixture + market + model version, first sighting kept. A scheduler calls
+`/api/tasks/run?token=CRON_SECRET` every 15 minutes (cron-job.org; it also keeps the free host awake):
+picks kicking off within 45 minutes get their league re-priced once and the closing price recorded;
+picks that kicked off 2+ hours ago are settled from the provider's final score (90 minutes). The
+Performance page then shows the forward record, closing line value and a calibration chart. State
+(record, tracked bets, bankroll, challenges, API caches) lives in `DATABASE_URL` (Postgres, e.g. Neon
+free tier; `sqlite:///file` locally); without it everything is lost on restart and the page says so.
 
 ## Put it online (Render)
 

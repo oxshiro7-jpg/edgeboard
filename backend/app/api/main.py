@@ -88,6 +88,21 @@ async def provider_missing(_: Request, exc: ProviderNotConfigured):
 
 # ------------------------------------------------------------------ public read API
 
+@app.api_route("/api/tasks/run", methods=["GET", "POST"])
+def run_tasks(token: str = ""):
+    """Called by an external scheduler (e.g. cron-job.org every 15 minutes): records closing
+    prices and settles finished picks. Also keeps the free host awake. Needs CRON_SECRET."""
+    import hmac
+    secret = os.getenv("CRON_SECRET", "")
+    if not secret or not hmac.compare_digest(token, secret):
+        raise HTTPException(403, "Invalid or missing task token")
+    p = service.providers(_day(None))
+    out = service.record.run_tasks(p)
+    import threading      # refresh today's slate (and log new picks) without holding the scheduler's request
+    threading.Thread(target=_warm_up, daemon=True).start()
+    return out
+
+
 @app.get("/api/health")
 def health():
     try:
@@ -102,8 +117,11 @@ def health():
     elif configured and settings.football_provider == "football_data":
         from app.providers.registry import _shared_http
         budget = [h.status() for h in _shared_http.values()]   # type: ignore[attr-defined]
+    st = service.store
     return {"status": "ok", "providers": {"football": settings.football_provider, "odds": settings.odds_provider},
-            "provider_configured": configured, "note": note, "api_budget": budget}
+            "provider_configured": configured, "note": note, "api_budget": budget,
+            "storage": {"kind": st.kind, "persistent": st.persistent, "error": getattr(st, "error", None)},
+            "scheduler": bool(os.getenv("CRON_SECRET"))}
 
 
 @app.get("/api/competitions")

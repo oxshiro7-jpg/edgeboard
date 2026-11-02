@@ -120,7 +120,7 @@ class TheOddsApiProvider(OddsProvider):
 
     def __init__(self, api_key: str, regions: str = "eu", markets: str = "h2h,totals",
                  bookmakers: Optional[list[str]] = None, history_loader=None,
-                 aliases: Optional[dict[str, list[str]]] = None, http=None):
+                 aliases: Optional[dict[str, list[str]]] = None, http=None, store=None):
         import os
         from .web_cache import WebCache
         self.api_key = api_key
@@ -135,13 +135,28 @@ class TheOddsApiProvider(OddsProvider):
             "The Odds API", BASE_URL, {}, lambda path, params: int(hours * 3600),
             cache_path=os.getenv("ODDS_CACHE_PATH", "/tmp/edgeboard-odds.json"),
             remaining_header="x-requests-remaining", reserve=int(os.getenv("ODDS_CREDIT_RESERVE", "10")),
-            secret_params=("apiKey",))
+            secret_params=("apiKey",), store=store)
 
-    def _events(self, sport: str) -> list[dict]:
-        body = self.http.get(f"/sports/{sport}/odds",
-                             {"regions": self.regions, "markets": self.markets, "oddsFormat": "decimal",
-                              "dateFormat": "iso"}, secrets={"apiKey": self.api_key})
+    def _params(self) -> dict:
+        return {"regions": self.regions, "markets": self.markets, "oddsFormat": "decimal", "dateFormat": "iso"}
+
+    def _events(self, sport: str, max_age: Optional[float] = None) -> list[dict]:
+        body = self.http.get(f"/sports/{sport}/odds", self._params(), secrets={"apiKey": self.api_key},
+                             max_age=max_age)
         return body if isinstance(body, list) else []
+
+    def refresh(self, competition_id: str, max_age: float = 20 * 60) -> bool:
+        """Re-fetch one league's prices if the cached copy is older than max_age (used for closing
+        prices just before kickoff; the refreshed prices also serve the app's pages)."""
+        sport = SPORT_KEYS.get(competition_id)
+        if not sport:
+            return False
+        self._events(sport, max_age=max_age)
+        return True
+
+    def priced_at(self, competition_id: str) -> Optional[float]:
+        sport = SPORT_KEYS.get(competition_id)
+        return self.http.cached_at(f"/sports/{sport}/odds", self._params()) if sport else None
 
     def odds(self, fixture: FixtureRef, home_name: str, away_name: str,
              alt_names: tuple = ()) -> dict[str, OddsSeries]:

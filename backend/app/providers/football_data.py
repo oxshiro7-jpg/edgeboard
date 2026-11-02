@@ -171,6 +171,27 @@ class FootballDataOrgProvider(FootballDataProvider):
             return ref
         return None
 
+    def result(self, fixture_id: str):
+        """Final score for settlement, read fresh from the provider. Returns a MatchResult,
+        "void" (cancelled/awarded), or None while the match is not finished."""
+        from app.engine.tracking import MatchResult
+        m = self.http.get(f"/matches/{int(fixture_id)}", max_age=10 * 60)
+        if not isinstance(m, dict) or str(m.get("id")) != str(fixture_id):
+            return None
+        if m.get("status") in ("CANCELLED", "AWARDED"):
+            return "void"
+        if m.get("status") != "FINISHED":
+            return None
+        sc = m.get("score") or {}
+        ft, ht = sc.get("fullTime") or {}, sc.get("halfTime") or {}
+        if sc.get("duration") not in (None, "REGULAR"):
+            rt = sc.get("regularTime") or {}       # bets settle on 90 minutes
+            if rt.get("home") is not None:
+                ft = rt
+        if None in (ft.get("home"), ft.get("away"), ht.get("home"), ht.get("away")):
+            return None
+        return MatchResult(int(ft["home"]), int(ft["away"]), int(ht["home"]), int(ht["away"]))
+
     def fixtures(self, day: date, competition_ids: list[str]) -> list[FixtureRef]:
         # Window wider than the day (UTC vs local time); verification keeps only the selected local date.
         body = self.http.get("/matches", {"dateFrom": (day - timedelta(days=1)).isoformat(),

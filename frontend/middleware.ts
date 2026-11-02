@@ -15,4 +15,4 @@ export function middleware(req: NextRequest) {
   return new NextResponse("Password required", { status: 401, headers: { "WWW-Authenticate": 'Basic realm="EdgeBoard"' } });
 }
 
-export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health).*)"] };
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico|api/health|api/tasks).*)"] };

@@ -30,7 +30,7 @@ class WebCache:
                  min_interval: float = 0.0, cache_path: Optional[str] = None,
                  remaining_header: Optional[str] = None, reserve: int = 0,
                  fetch: Optional[Callable[[str, dict], dict]] = None, clock=time.time, sleep=time.sleep,
-                 secret_params: tuple[str, ...] = ()):
+                 secret_params: tuple[str, ...] = (), store=None):
         self.name, self.base_url, self.headers = name, base_url, headers
         self.ttl, self.min_interval, self.cache_path = ttl, min_interval, cache_path
         self.remaining_header, self.reserve = remaining_header, reserve
@@ -41,7 +41,13 @@ class WebCache:
         self._last_call = 0.0
         self.calls = 0
         self.remaining: Optional[int] = None
+        self.store = store if (store is not None and getattr(store, "persistent", False)) else None
         self._load()
+        if self.store is not None:
+            self.remaining = self.store.get(self._skey("__remaining__"), self.remaining)
+
+    def _skey(self, key: str) -> str:
+        return f"cache:{self.name}:{key}"
 
     # ------------------------------------------------------------ persistence
     def _load(self) -> None:
@@ -57,7 +63,7 @@ class WebCache:
             self._cache = {}
 
     def _save(self) -> None:
-        if not self.cache_path:
+        if not self.cache_path or self.store is not None:
             return
         try:
             tmp = self.cache_path + ".tmp"
@@ -77,12 +83,23 @@ class WebCache:
         return {"source": self.name, "live_calls_this_process": self.calls,
                 "remaining_reported": self.remaining, "cached_responses": len(self._cache)}
 
-    def get(self, path: str, params: Optional[dict] = None, secrets: Optional[dict] = None):
+    def cached_at(self, path: str, params: Optional[dict] = None) -> Optional[float]:
+        hit = self._cache.get(self.key(path, {k: v for k, v in (params or {}).items() if v is not None}))
+        return hit[0] if hit else None
+
+    def get(self, path: str, params: Optional[dict] = None, secrets: Optional[dict] = None,
+            max_age: Optional[float] = None):
+        """max_age overrides the TTL (e.g. a fresh price just before kickoff)."""
         params = {k: v for k, v in (params or {}).items() if v is not None}
         key = self.key(path, params)
+        ttl = self.ttl(path, params) if max_age is None else max_age
         with self._lock:                       # one live call at a time keeps the spacing honest
             hit = self._cache.get(key)
-            if hit and self._clock() - hit[0] < self.ttl(path, params):
+            if hit is None and self.store is not None:
+                stored = self.store.get(self._skey(key))
+                if stored:
+                    hit = self._cache[key] = (stored[0], stored[1])
+            if hit and self._clock() - hit[0] < ttl:
                 return hit[1]
             if self.remaining is not None and self.remaining <= self.reserve:
                 raise SourceError(f"{self.name}: request allowance used up ({self.remaining} left, "
@@ -94,6 +111,12 @@ class WebCache:
             self.calls += 1
             body = self._fetch(path, params) if self._fetch else self._live(path, {**params, **(secrets or {})})
             self._cache[key] = (self._clock(), body)
+            if self.store is not None:
+                try:
+                    self.store.put(self._skey(key), [self._cache[key][0], body])
+                    self.store.put(self._skey("__remaining__"), self.remaining)
+                except Exception as e:      # storage trouble must not break the page
+                    log.warning("could not persist %s: %s", key, e)
             if len(self._cache) > 3000:
                 now = self._clock()
                 self._cache = {k: v for k, v in self._cache.items() if now - v[0] < 14 * 86400}

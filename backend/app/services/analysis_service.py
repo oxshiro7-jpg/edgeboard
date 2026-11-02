@@ -3,6 +3,8 @@ engine; in production the engine runs in the Celery prediction worker and the
 API reads persisted snapshots."""
 from __future__ import annotations
 
+import logging
+
 import copy
 import threading
 import time
@@ -15,6 +17,9 @@ from app.settings import Settings
 
 from .board import all_picks, apply_filter, daily_board, daily_summary, parse_filter
 from .prediction import PredictionService
+
+
+log = logging.getLogger("edgeboard.analysis")
 
 
 class ConfigStore:
@@ -60,7 +65,7 @@ class AnalysisService:
     passed; fixtures that fail are listed with their status and no prediction."""
 
     def __init__(self, settings: Settings, providers_factory: Optional[Callable[[date], Providers]] = None,
-                 tz: str = "UTC"):
+                 tz: str = "UTC", store=None):
         self.settings = settings
         self.config = ConfigStore()
         if settings.football_provider == "football_data":
@@ -71,6 +76,10 @@ class AnalysisService:
                                 "thresholds": {"min_data_quality": 45, "min_confidence": 50, "min_pick_score": 55}})
         self.whitelist = list(settings.competitions)
         self.ml_model = None     # set when a challenger is promoted (services.lab)
+        from app.store import get_store
+        from .record import Record
+        self.store = store if store is not None else get_store()
+        self.record = Record(self.store)
         self._factory = providers_factory
         self.predictions = PredictionService(self.providers, lambda: self.whitelist, self.config.get, tz,
                                              lambda: self.ml_model)
@@ -82,7 +91,12 @@ class AnalysisService:
                                self.settings.provider_keys(), tz=self.predictions.tz)
 
     def slate(self, day: date) -> list[dict]:
-        return self.predictions.slate(day, (self.config.version, tuple(self.whitelist), id(self.ml_model)))
+        entries = self.predictions.slate(day, (self.config.version, tuple(self.whitelist), id(self.ml_model)))
+        try:
+            self.record.log_model_picks(entries)     # forward record: picks logged before kickoff
+        except Exception as e:                      # logging must never break the pages
+            log.warning("could not log model picks: %s", e)
+        return entries
 
     def day(self, day: date) -> list[dict]:
         """Analyses of verified fixtures only."""

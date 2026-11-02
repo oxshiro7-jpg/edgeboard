@@ -69,13 +69,20 @@ def _football_data(keys: dict[str, str], tz: str) -> Providers:
         raise ProviderNotConfigured("FOOTBALL_DATA_TOKEN is not set: no fixtures can be fetched or verified")
     from .football_data import FootballDataOrgProvider
     from .the_odds_api import TheOddsApiProvider
-    fd = _shared_http.get(("fd", token))
+    from app.store import get_store
+    from .football_data import BASE_URL as FD_URL, _ttl as fd_ttl
+    from .web_cache import WebCache
+    store = get_store()
+    fd = _shared_http.get(("fd", token)) or WebCache(
+        "football-data.org", FD_URL, {"X-Auth-Token": token}, fd_ttl, min_interval=6.5,
+        cache_path=os.getenv("FOOTBALL_DATA_CACHE_PATH", "/tmp/edgeboard-football-data.json"),
+        remaining_header="X-Requests-Available-Minute", store=store)
     fp = FootballDataOrgProvider(token, tz=tz, http=fd)
     _shared_http[("fd", token)] = fp.http          # one cache and one rate limiter per process
     okey = keys.get("THE_ODDS_API_KEY")
     if okey:
         oh = _shared_http.get(("odds", okey))
-        op: OddsProvider = TheOddsApiProvider(okey, http=oh)
+        op: OddsProvider = TheOddsApiProvider(okey, http=oh, store=store)
         _shared_http[("odds", okey)] = op.http      # type: ignore[attr-defined]
     else:
         op = _NoOdds()
