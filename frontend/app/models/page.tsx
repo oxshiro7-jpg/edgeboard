@@ -6,7 +6,8 @@ import { CalibrationChart } from "@/components/charts";
 import { ErrorNote, PageHeader, Panel } from "@/components/ui/kit";
 
 interface Models {
-  active_version: string; settled_matches: number;
+  active_version: string; settled_matches: number; calibration_source?: string;
+  component_status?: Record<string, { active: boolean; weight: number; reason?: string }> | null;
   config: { ensemble: Record<string, number>; thresholds: Record<string, number | string> };
   result_forecast: { model: { log_loss: number; brier: number }; market: { log_loss: number; brier: number } };
   components: Record<string, { n: number; log_loss: number; brier: number }>;
@@ -32,9 +33,10 @@ export default function ModelsPage() {
       </PageHeader>
       {m.drift && <p className="panel border-critical/50 p-3 text-sm text-ink">{m.drift}</p>}
       <div className="grid gap-6 xl:grid-cols-2">
-        <Panel title="Calibration, every priced selection">
+        <Panel title="Calibration">
+          <p className="mb-2 text-sm text-muted">Source: {m.calibration_source ?? "backtest: every priced selection"}.</p>
           <CalibrationChart rows={m.calibration.rows} />
-          <p className="mt-2 text-sm text-ink-2">{m.calibration.message} Expected calibration error {m.calibration.ece}.</p>
+          <p className="mt-2 text-sm text-ink-2">{m.calibration.message} {m.calibration.ece !== null ? ` Expected calibration error ${m.calibration.ece}.` : ""}</p>
           <table className="mt-3 w-full text-sm">
             <thead><tr className="border-b border-line"><th className="th pl-0">Bucket</th><th className="th text-right">n</th><th className="th text-right">Predicted</th><th className="th text-right">Actual</th><th className="th">Flag</th></tr></thead>
             <tbody>
@@ -54,13 +56,21 @@ export default function ModelsPage() {
             <table className="w-full text-sm">
               <thead><tr className="border-b border-line"><th className="th pl-0">Component</th><th className="th text-right">Weight</th><th className="th text-right">Log loss</th><th className="th text-right">Brier</th></tr></thead>
               <tbody>
-                {Object.entries(m.components).map(([k, v]) => (
-                  <tr key={k} className="border-b border-line/60">
-                    <td className="py-1.5 capitalize">{k.replace("_", " ")}</td>
-                    <td className="num text-right text-ink-2">{((m.config.ensemble[k] ?? 0) * 100).toFixed(0)}%</td>
-                    <td className="num text-right">{v.log_loss}</td><td className="num text-right">{v.brier}</td>
-                  </tr>
-                ))}
+                {Object.entries(m.components).map(([k, v]) => {
+                  const st = m.component_status?.[k];
+                  return (
+                    <tr key={k} className="border-b border-line/60">
+                      <td className="py-1.5 capitalize">
+                        {k.replace("_", " ")}
+                        {st && !st.active && <div className="text-xs normal-case text-muted">{st.reason}</div>}
+                      </td>
+                      <td className="num text-right text-ink-2">
+                        {st ? (st.active ? `${(st.weight * 100).toFixed(0)}%` : "off") : `${((m.config.ensemble[k] ?? 0) * 100).toFixed(0)}%`}
+                      </td>
+                      <td className="num text-right">{v.n ? v.log_loss : "—"}</td><td className="num text-right">{v.n ? v.brier : "—"}</td>
+                    </tr>
+                  );
+                })}
                 <tr className="font-medium"><td className="py-1.5">Ensemble</td><td /><td className="num text-right">{m.result_forecast.model.log_loss}</td><td className="num text-right">{m.result_forecast.model.brier}</td></tr>
               </tbody>
             </table>

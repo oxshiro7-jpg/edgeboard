@@ -203,13 +203,32 @@ class LabService:
                 if comp:
                     cr.append(((comp["home"], comp["draw"], comp["away"]), outcome_index(c.result)))
             comp_scores[name] = multiclass_scores(cr)
+        # Which components actually run on today's data, with their effective weights.
+        active: dict[str, float] = {}
+        for a in self.analyses(day).values():
+            for comp in a["prediction"]["components"]:
+                active.setdefault(comp["name"], comp["weight"])
+            break
+        why_not = {"xg_poisson": "not running: no xG data (it would duplicate Dixon-Coles)",
+                   "form": "not running: needs xG history", "elo": "not running: no team ratings source",
+                   "market": "not running: no odds for this fixture", "dixon_coles": "not running"}
+        component_status = {name: ({"active": True, "weight": active[name]} if name in active else
+                                   {"active": False, "weight": 0.0, "reason": why_not.get(name, "not running")})
+                            for name in ("dixon_coles", "xg_poisson", "form", "elo", "market")} if active else None
+        calibration, cal_source, settled = r["calibration_all"], "backtest: every priced selection", len(cases)
+        if not cases:
+            fwd = [b for b in self.record.bets("model") if b.result]
+            calibration = self.record.calibration(fwd)
+            cal_source, settled = "forward record: the app's recommended picks, settled", len(fwd)
         return {
             "active_version": cfg.model_version,
             "config": cfg.to_dict(),
-            "settled_matches": len(cases),
+            "settled_matches": settled,
+            "calibration_source": cal_source,
+            "component_status": component_status,
             "result_forecast": r["result_forecast"],
             "components": comp_scores,
-            "calibration": r["calibration_all"],
+            "calibration": calibration,
             "calibration_by_family": {k: {kk: v[kk] for kk in ("n", "ece", "brier", "degraded", "message")} for k, v in by_fam.items()},
             "suggested_calibration_factors": calibration_factors(by_fam),
             "drift": drift(recent, base),

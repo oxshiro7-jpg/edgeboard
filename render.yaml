@@ -24,6 +24,8 @@ services:
         generateValue: true
       - key: APP_TIMEZONE
         value: Africa/Lagos
+      - key: MODEL_VERSION           # label in the sidebar
+        value: FootballModel_v0.3.1-scores-only
       - key: ODDS_CACHE_HOURS        # odds refreshed at most this often per league (each refresh = 2 credits)
         value: "24"
       - key: MAX_ANALYSED_FIXTURES   # no cap needed with football-data.org
