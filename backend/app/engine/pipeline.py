@@ -182,6 +182,8 @@ def analyse_fixture(fx: FixtureInput, cfg: Optional[EngineConfig] = None, now: O
         odds = series.current if series else None
         vol = odds_volatility(series)
         dis = spread(key)
+        if ens.single_model:
+            dis = max(dis, cfg.params.single_model_spread)   # one model: agreement unmeasured, not perfect
         nv = _no_vig(fx, key, cfg.params.margin_method) if odds else None
         edge = (prob - nv) if nv is not None else ((prob - implied_probability(odds)) if odds else None)
         suspicious = edge is not None and edge > th.suspicious_edge_pp
@@ -214,13 +216,18 @@ def analyse_fixture(fx: FixtureInput, cfg: Optional[EngineConfig] = None, now: O
         m["pick_score"] = ps
         m["pick_score_parts"] = parts
         rejected = _gate(m, prob, odds, ev, conf.score, dq.score, dis, rk.category, fx, absence_unc, cfg)  # type: ignore[arg-type]
+        gap = _goals_gap(ens)
+        if gap is not None and family(key) in ("goals", "btts", "first_half", "second_half") \
+                and market_type(key) not in ("FH1X2", "FHDC") and abs(gap) > th.max_goals_gap:
+            rejected.append(f"Model ({ens.stats_total:.2f}) and market ({ens.market_total:.2f}) disagree on "
+                            f"expected goals by {abs(gap):.2f}: likely information the model lacks")
         m["reasons_rejected"] = rejected
         if rejected:
             m["status"] = "avoid"
             m["label_tag"] = "Insufficient Edge" if any(r.startswith(("No statistical edge", "Likely outcome")) for r in rejected) else "Avoid"
         else:
             m["status"] = "recommended"
-            m["label_tag"] = _label_tag(prob, ev, conf.score, ps, rk.category, cfg)  # type: ignore[arg-type]
+            m["label_tag"] = _label_tag(prob, ev, conf.score, ps, rk.category, cfg, dq.score)  # type: ignore[arg-type]
             m["why"] = explain.reasons(key, prob, fx, ws, ens.lambdas, ens.probs,
                                        {c.name: c.probs for c in ens.components})
             m["risks"] = _risk_notes(m, fx, ctx_notes, imp_h, imp_a, flags)
@@ -233,6 +240,7 @@ def analyse_fixture(fx: FixtureInput, cfg: Optional[EngineConfig] = None, now: O
     best = ranking.get("best_overall")
     status = ("Avoid" if dq.score < th.min_data_quality
               else "Strong opportunity" if best and best["pick_score"] >= th.strong_pick_score
+              and dq.score >= th.strong_label_min_data_quality
               else "Moderate opportunity" if rec else "No edge")
 
     def team_block(team, last5, last10, venue_ws, imp: A.AbsenceImpact, side: str) -> dict:
@@ -360,13 +368,21 @@ def _gate(m: dict, prob: float, odds: float, ev: float, conf: float, dq: float, 
     return r
 
 
-def _label_tag(prob: float, ev: float, conf: float, ps: float, risk_cat: str, cfg: EngineConfig) -> str:
+def _goals_gap(ens) -> Optional[float]:
+    if ens.stats_total is None or ens.market_total is None:
+        return None
+    return ens.stats_total - ens.market_total
+
+
+def _label_tag(prob: float, ev: float, conf: float, ps: float, risk_cat: str, cfg: EngineConfig,
+               dq: float = 100.0) -> str:
     th = cfg.thresholds
-    if ps >= th.highest_confidence_score and conf >= 80:
+    strong_ok = dq >= th.strong_label_min_data_quality      # weak data never earns a "strong" label
+    if ps >= th.highest_confidence_score and conf >= 80 and strong_ok:
         return "Highest Confidence"
     if RISK_ORDER.index(risk_cat) >= RISK_ORDER.index("High"):
         return "Higher Risk"
-    if ps >= th.strong_pick_score:
+    if ps >= th.strong_pick_score and strong_ok:
         return "Strong Pick"
     if prob >= 0.70 and RISK_ORDER.index(risk_cat) <= RISK_ORDER.index("Low"):
         return "Conservative Pick"

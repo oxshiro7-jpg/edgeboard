@@ -34,6 +34,9 @@ class EnsembleResult:
     disagreement: float               # max-min of component home-win probabilities
     goals_disagreement: float         # max-min of component expected total goals
     data_gaps: list[str] = field(default_factory=list)
+    single_model: bool = False        # only one statistical model ran: agreement is unmeasured
+    stats_total: Optional[float] = None    # expected total goals, statistical models only (weighted)
+    market_total: Optional[float] = None   # expected total goals implied by the 2.5 line
 
 
 def _venue_records(records: list[TeamMatchRecord], venue: str) -> list[TeamMatchRecord]:
@@ -41,16 +44,20 @@ def _venue_records(records: list[TeamMatchRecord], venue: str) -> list[TeamMatch
 
 
 def _team_rates(records: list[TeamMatchRecord], venue: str, n: int, use_goals_blend: float,
-                gaps: list[str], team: str) -> tuple[float, float]:
+                gaps: list[str], team: str, L: float = 1.38, shrink: float = 0.0) -> tuple[float, float]:
     """Opponent-adjusted attack/defence rates (goals-per-game scale).
-    Venue-specific records are blended in at 30% when there are enough."""
+    Venue-specific records are blended in at 30% when there are enough.
+    Without xG, raw goal averages over ~10 games are noisy, so they are shrunk
+    toward the league average L as if `shrink` average matches were added."""
     recent = records[:n]
     ws = window_stats(recent)
     if ws is None:
         raise ValueError(f"No match history for {team}")
     if ws.adj_xg_for is None:
-        gaps.append(f"No xG history for {team}; goals used instead")
-        f, a = ws.goals_for, ws.goals_against
+        gaps.append(f"No xG history for {team}; goals used instead (shrunk toward league average)")
+        k, m = shrink, ws.matches
+        f = (m * ws.goals_for + k * L) / (m + k)
+        a = (m * ws.goals_against + k * L) / (m + k)
     else:
         f = (1 - use_goals_blend) * ws.adj_xg_for + use_goals_blend * ws.goals_for
         a = (1 - use_goals_blend) * ws.adj_xg_against + use_goals_blend * ws.goals_against
@@ -84,12 +91,20 @@ def predict(fx: FixtureInput, cfg: EngineConfig, imp_h: AbsenceImpact, imp_a: Ab
     n = p.recent_matches
     comps: list[Component] = []
 
-    # 1) xG Poisson (flat window, opponent adjusted, pure xG)
-    fh, ah = _team_rates(fx.home.recent, "H", n, 0.0, gaps, fx.home.name)
-    fa, aa = _team_rates(fx.away.recent, "A", n, 0.0, gaps, fx.away.name)
-    lx = _lambdas(fh, ah, fa, aa, cfg, neutral, imp_h, imp_a, fat_h, fat_a, L)
-    mx = score_matrix(*lx, rho=0.0, max_goals=p.max_goals)
-    comps.append(Component("xg_poisson", outcome_probs(mx), lx, mx, "Independent Poisson on opponent-adjusted xG"))
+    has_xg = any(r.xg_for is not None for r in fx.home.recent[:n]) and \
+        any(r.xg_for is not None for r in fx.away.recent[:n])
+    k = p.goals_shrink_matches
+
+    # 1) xG Poisson (flat window, opponent adjusted, pure xG). Without xG it would be fed the same
+    #    goals as Dixon-Coles below: a duplicate that fakes model agreement, so it is skipped.
+    if has_xg:
+        fh, ah = _team_rates(fx.home.recent, "H", n, 0.0, gaps, fx.home.name, L, k)
+        fa, aa = _team_rates(fx.away.recent, "A", n, 0.0, gaps, fx.away.name, L, k)
+        lx = _lambdas(fh, ah, fa, aa, cfg, neutral, imp_h, imp_a, fat_h, fat_a, L)
+        mx = score_matrix(*lx, rho=0.0, max_goals=p.max_goals)
+        comps.append(Component("xg_poisson", outcome_probs(mx), lx, mx, "Independent Poisson on opponent-adjusted xG"))
+    else:
+        gaps.append("No xG: a single scores-based model runs, so model agreement cannot be measured")
 
     # 2) Dixon-Coles (league fit when available, else xG/goals blend) with low-score correction
     if league_fit and fx.home.team_id in league_fit.attack and fx.away.team_id in league_fit.attack:
@@ -100,11 +115,13 @@ def predict(fx: FixtureInput, cfg: EngineConfig, imp_h: AbsenceImpact, imp_a: Ab
         note = "Dixon-Coles league fit (time-decayed MLE)"
     else:
         dgaps: list[str] = []
-        fh2, ah2 = _team_rates(fx.home.recent, "H", n, 0.4, dgaps, fx.home.name)
-        fa2, aa2 = _team_rates(fx.away.recent, "A", n, 0.4, dgaps, fx.away.name)
+        fh2, ah2 = _team_rates(fx.home.recent, "H", n, 0.4, dgaps, fx.home.name, L, k)
+        fa2, aa2 = _team_rates(fx.away.recent, "A", n, 0.4, dgaps, fx.away.name, L, k)
         ld = _lambdas(fh2, ah2, fa2, aa2, cfg, neutral, imp_h, imp_a, fat_h, fat_a, L)
         rho = p.dixon_coles_rho
-        note = "Dixon-Coles on 60/40 xG-goals blend (no league fit loaded)"
+        note = ("Dixon-Coles on 60/40 xG-goals blend (no league fit loaded)" if has_xg
+                else "Dixon-Coles on goals shrunk toward the league average (no xG available)")
+        gaps.extend(g for g in dgaps if g not in gaps)
     md = score_matrix(*ld, rho=rho, max_goals=p.max_goals)
     comps.append(Component("dixon_coles", outcome_probs(md), ld, md, note))
 
@@ -162,6 +179,11 @@ def predict(fx: FixtureInput, cfg: EngineConfig, imp_h: AbsenceImpact, imp_a: Ab
     models = [c for c in comps if c.name != "market"]   # disagreement is among models, not vs the market
     homes = [c.probs[0] for c in models]
     totals = [sum(c.lambdas) for c in goal_comps if c.name != "market"]
+    stat_goal = [c for c in goal_comps if c.name not in ("market", "ml")]
+    sw = sum(w[c.name] for c in stat_goal)
+    stats_total = sum(w[c.name] * sum(c.lambdas) for c in stat_goal) / sw if sw else None
+    mkt = next((c for c in comps if c.name == "market" and c.lambdas), None)
+    market_total = sum(mkt.lambdas) if mkt else None
     return EnsembleResult(
         components=comps,
         weights=w,
@@ -171,6 +193,9 @@ def predict(fx: FixtureInput, cfg: EngineConfig, imp_h: AbsenceImpact, imp_a: Ab
         disagreement=max(homes) - min(homes),
         goals_disagreement=max(totals) - min(totals) if totals else 0.0,
         data_gaps=gaps,
+        single_model=len(models) <= 1,
+        stats_total=stats_total,
+        market_total=market_total,
     )
 
 

@@ -37,7 +37,7 @@ class FreeStack(unittest.TestCase):
         self.assertEqual(slate["2"]["status"], "ODDS UNAVAILABLE")
         a = slate["1"]["analysis"]
         self.assertEqual(a["provenance"]["provider"], "football_data")
-        self.assertEqual(a["model"]["version"], "FootballModel_v0.3.0-scores-only")
+        self.assertEqual(a["model"]["version"], "FootballModel_v0.3.1-scores-only")
         self.assertIn("Injury feed unavailable", a["data_quality"]["gaps"])
         self.assertFalse([m for m in slate["2"]["analysis"]["markets"] if m["status"] == "recommended"])
 
@@ -119,3 +119,44 @@ class Cache(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScoresOnlyModel(unittest.TestCase):
+    """Regression for the Lorient v Brest report: a scores-only model 0.7 goals below the market
+    produced a +22% 'Strong Pick' on Under 2.5."""
+
+    def low_scoring_season(self):
+        out, mid = [], 9500
+        pairs = [(501, 503), (502, 504), (505, 506), (503, 502), (504, 501), (506, 505)]
+        for r in range(10):
+            when = F.KO - timedelta(days=7 * (10 - r))
+            for i, (h, a) in enumerate(pairs[r % 2 * 3: r % 2 * 3 + 3]):
+                mid += 1
+                lo = h in (501, 502) or a in (501, 502)
+                out.append(F.match(mid, h, a, when, "FINISHED", (1, 0) if lo else (2, 2)))
+        return out
+
+    def analysis(self, over, under):
+        today = [F.match(1, 501, 502, F.KO)]
+        svc, _ = service(today, [F.odds_event("Test Rovers", "Test United", F.KO, 2.6, 3.1, 2.9, over, under)],
+                         finished=self.low_scoring_season())
+        e = svc.slate(DAY)[0]
+        return e["analysis"]
+
+    def test_goal_count_disagreement_rejects_totals(self):
+        a = self.analysis(over=1.72, under=2.20)              # market expects ~2.6 goals
+        names = [c["name"] for c in a["prediction"]["components"]]
+        self.assertNotIn("xg_poisson", names)                 # no duplicate goals model faking agreement
+        under = next(m for m in a["markets"] if m["key"] == "OU:2.5:under")
+        self.assertEqual(under["status"], "avoid")
+        self.assertTrue(any("disagree on expected goals" in r for r in under["reasons_rejected"]),
+                        under["reasons_rejected"])
+        self.assertFalse([m for m in a["markets"] if m["status"] == "recommended" and m["label_tag"] == "Strong Pick"])
+
+    def test_shrinkage_tempers_extremes(self):
+        from app.engine.ensemble import _team_rates
+        from app.engine.types import TeamMatchRecord
+        recs = [TeamMatchRecord(F.KO - timedelta(days=7 * i), "x", None, "H", "epl", 4, 0) for i in range(10)]
+        f, a = _team_rates(recs, "H", 10, 0.4, [], "T", L=1.4, shrink=6.0)
+        self.assertAlmostEqual(f, (10 * 4 + 6 * 1.4) / 16, places=6)    # 3.03, not 4.0
+        self.assertAlmostEqual(a, (0 + 6 * 1.4) / 16, places=6)         # 0.53, not 0.15

@@ -91,7 +91,7 @@ edgeboard/
     app/db/                PostgreSQL schema (all 21 tables + audit_logs, app_settings), append-only predictions
     app/workers/tasks.py   Celery beat schedule: history/fixtures/stats/odds/injuries/lineups/recalc/evaluation
     migrations/            TimescaleDB hypertables + DB-level immutability triggers
-    tests/                 84 tests (engine, phases 4-8, verification gate on API-shaped payloads)
+    tests/                 86 tests (engine, phases 4-8, verification gate on API-shaped payloads)
   frontend/                Next.js 15, TypeScript, Tailwind
   prototype/               static status page (no fixtures: it is not connected to an API)
 ```
@@ -104,9 +104,12 @@ Brasileirão, Champions League; current season; 10 requests/minute) and The Odds
 (500 credits/month; h2h + totals, EU region = 2 credits per league refresh, cached `ODDS_CACHE_HOURS`).
 One request per competition gives the whole season's results, which feed form, team verification,
 league averages and H2H. There is no xG, shot, lineup or injury data on these tiers: those inputs stay
-empty, data quality tops out around 52, and the app runs the `FootballModel_v0.3.0-scores-only`
+empty, data quality tops out around 52, and the app runs the `FootballModel_v0.3.1-scores-only`
 profile (data quality >= 45, confidence >= 50, pick score >= 55; EV, odds range, risk and edge-sanity
-gates unchanged). Odds events are matched to fixtures only when both teams agree after fixed rules
+gates unchanged). Scores-only safeguards (v0.3.1): team goal rates are shrunk toward the league
+average (6 pseudo-matches); the duplicate xG-Poisson component is skipped so a single model is not
+reported as agreeing with itself; goal-count markets are rejected when the model's expected total
+is more than 0.35 goals from the market's; "Strong" labels need data quality >= 60. Odds events are matched to fixtures only when both teams agree after fixed rules
 (case, accents, punctuation, legal-form tokens like FC/CF/AC) or an explicit alias, and the kickoff is
 within 3 hours, and exactly one event matches. Otherwise: ODDS UNAVAILABLE.
 

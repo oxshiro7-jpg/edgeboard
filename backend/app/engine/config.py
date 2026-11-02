@@ -45,6 +45,8 @@ class Thresholds:
     strong_pick_score: float = 75
     highest_confidence_score: float = 85
     value_pick_ev: float = 0.08
+    max_goals_gap: float = 0.35        # |model total - market total| above this rejects goal-count markets
+    strong_label_min_data_quality: float = 60   # "Strong Pick" / "Strong opportunity" need at least this
 
 
 @dataclass
@@ -59,11 +61,14 @@ class ModelParams:
     recent_matches: int = 10
     form_half_life_matches: float = 4.0
     margin_method: str = "power"
+    goals_shrink_matches: float = 6.0       # without xG, team goal rates are shrunk toward the league
+                                            # average as if this many average matches were added
+    single_model_spread: float = 0.10       # assumed model spread when only one stats model can run
 
 
 @dataclass
 class EngineConfig:
-    model_version: str = "FootballModel_v0.3.0"
+    model_version: str = "FootballModel_v0.3.1"
     ensemble: EnsembleWeights = field(default_factory=EnsembleWeights)
     pick_weights: PickScoreWeights = field(default_factory=PickScoreWeights)
     thresholds: Thresholds = field(default_factory=Thresholds)
